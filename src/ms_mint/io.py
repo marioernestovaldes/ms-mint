@@ -29,6 +29,18 @@ MS_FILE_COLUMNS = [
     "mz",
     "intensity",
 ]
+# add a new set of columns for MS2 data
+MS2_FILE_COLUMNS = [
+    "scan_id",
+    "ms_level",
+    "polarity",
+    "scan_time",
+    "mz",
+    "intensity",
+    "mz_precursor",
+    "filterLine",
+    "filterLine_to_ELMAVEN"
+]
 
 
 def ms_file_to_df(fn: Union[str, P], read_only: bool = False) -> Optional[pd.DataFrame]:
@@ -121,7 +133,12 @@ def mzxml_to_df(
 
     df = df.explode(["mz", "intensity"])
     set_dtypes(df)
-    return df.reset_index(drop=True)[MS_FILE_COLUMNS]
+
+    # export dataframes with certain columns depending on the data-type (MS1 vs. MS2)
+    if df["ms_level"].unique() == 2:
+        return df.reset_index(drop=True)[MS2_FILE_COLUMNS]
+    else:
+        return df.reset_index(drop=True)[MS_FILE_COLUMNS]
 
 
 def _extract_mzxml(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -133,14 +150,48 @@ def _extract_mzxml(data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dictionary with extracted scan information.
     """
-    return {
-        "scan_id": data["num"],
-        "ms_level": data["msLevel"],
-        "polarity": data.get("polarity", None),
-        "scan_time": data["retentionTime"],
-        "mz": np.array(data["m/z array"]),
-        "intensity": np.array(data["intensity array"]),
-    }
+
+    # Function modified to export a dictionary with extracted scan information from either MS1 or MS2
+    ms_level = data["msLevel"]
+
+    if ms_level == 1:
+
+        return {
+            "scan_id": data["num"],
+            "ms_level": data["msLevel"],
+            "polarity": data.get("polarity", None),
+            "scan_time": data["retentionTime"],
+            "mz": np.array(data["m/z array"]),
+            "intensity": np.array(data["intensity array"]),
+        }
+
+    elif ms_level == 2:
+
+        polarity_str = 'Positive' if data.get("polarity", None) == '+' else 'Negative'
+        mz_precursor = data['precursorMz'][0]['precursorMz']
+        mz = data["m/z array"][0]
+
+        filterLine_to_ELMAVEN = ' '.join([
+            polarity_str,
+            # 'ESI', 'SRM', 'ms2',
+            f"{mz_precursor:.3f}",
+            f"[{mz:.3f}]"
+        ]
+        )
+
+        return {
+            "scan_id": data["num"],
+            "ms_level": data["msLevel"],
+            "polarity": data.get("polarity", None),
+            "scan_time": data["retentionTime"],
+            "mz": data["m/z array"][0],
+            "intensity": np.array(data["intensity array"]),
+
+            # new for MS2 data
+            "mz_precursor": data['precursorMz'][0]['precursorMz'],
+            "filterLine": data["filterLine"],
+            "filterLine_to_ELMAVEN": filterLine_to_ELMAVEN
+        }
 
 
 def mzml_to_pandas_df_pyteomics(fn: Union[str, P], **kwargs) -> Optional[pd.DataFrame]:
@@ -232,6 +283,10 @@ def set_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         ms_level=np.int8,
         scan_time=np.float32,
         intensity=np.int64,
+        # add data types for the new columns from MS2 data
+        mz_precursor=np.float32,
+        filterLine=str,
+        filterLine_to_ELMAVEN=str,
     )
 
     for var, dtype in dtypes.items():
